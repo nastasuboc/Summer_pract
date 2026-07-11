@@ -1,4 +1,3 @@
-// mainwindow.h
 #pragma once
 
 #include <QMainWindow>
@@ -12,16 +11,22 @@ class QTableWidget;
 class QCloseEvent;
 
 #include "booking.h"
+#include "bookingservice.h"
 
-class MainWindow : public QMainWindow
+class MainWindow : public QMainWindow, public IBookingObserver
 {
     Q_OBJECT
 public:
     explicit MainWindow(QWidget *parent = nullptr);
-    ~MainWindow() override = default;
+    ~MainWindow() override;
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+
+    // Observer
+    void onBookingAdded(const Booking& b) override;
+    void onBookingRemoved(int index) override;
+    void onBookingsChanged() override;
 
 private slots:
     void newFile();
@@ -45,7 +50,7 @@ private:
     QComboBox *roomTypeCombo;
     QTableWidget *table;
 
-    QVector<Booking> bookings;
+    BookingService service;
     QString lastFileName;
     bool modified = false;
 
