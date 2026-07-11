@@ -10,6 +10,7 @@
 #include <QTableWidget>
 #include <QHeaderView>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
 #include <QWidget>
 #include <QFileDialog>
 #include <QFile>
@@ -28,6 +29,13 @@ MainWindow::MainWindow(QWidget *parent)
     createUi();
     createMenus();
     readSettings();
+
+    service.addObserver(this);
+}
+
+MainWindow::~MainWindow()
+{
+    service.removeObserver(this);
 }
 
 void MainWindow::createUi()
@@ -35,7 +43,6 @@ void MainWindow::createUi()
     auto *central = new QWidget(this);
     auto *layout = new QVBoxLayout(central);
 
-    // Поля ввода
     customerEdit = new QLineEdit(this);
     customerEdit->setPlaceholderText(tr("ФИО клиента"));
 
@@ -63,7 +70,6 @@ void MainWindow::createUi()
 
     layout->addLayout(formLayout);
 
-    // Таблица записей
     table = new QTableWidget(this);
     table->setColumnCount(6);
     QStringList headers;
@@ -86,7 +92,6 @@ void MainWindow::createUi()
 
 void MainWindow::createMenus()
 {
-    // Меню Файл
     QMenu *fileMenu = menuBar()->addMenu(tr("Файл"));
 
     QAction *newAct = fileMenu->addAction(tr("Новый"), this, &MainWindow::newFile);
@@ -109,7 +114,6 @@ void MainWindow::createMenus()
     });
     exitAct->setShortcut(QKeySequence::Quit);
 
-    // Меню Правка
     QMenu *editMenu = menuBar()->addMenu(tr("Правка"));
 
     editMenu->addAction(tr("Добавить запись"), this, &MainWindow::addBooking);
@@ -120,7 +124,6 @@ void MainWindow::createMenus()
     editMenu->addAction(tr("Сортировка по клиенту"), this, &MainWindow::sortByCustomer);
     editMenu->addAction(tr("Сортировка по ночам"), this, &MainWindow::sortByNights);
 
-    // Меню Справка
     QMenu *helpMenu = menuBar()->addMenu(tr("Справка"));
     helpMenu->addAction(tr("О программе"), this, &MainWindow::about);
 }
@@ -166,7 +169,8 @@ void MainWindow::appendBookingToTable(const Booking& b)
 void MainWindow::refreshTable()
 {
     table->setRowCount(0);
-    for (const Booking& b : bookings) {
+    auto list = service.all();
+    for (const Booking& b : list) {
         appendBookingToTable(b);
     }
 }
@@ -177,8 +181,7 @@ void MainWindow::newFile()
                                        tr("Очистить текущие данные?"),
                                        QMessageBox::Yes | QMessageBox::No);
     if (reply == QMessageBox::Yes) {
-        bookings.clear();
-        refreshTable();
+        service.clear();
         customerEdit->clear();
         hotelEdit->clear();
         nightsSpin->setValue(1);
@@ -201,8 +204,7 @@ void MainWindow::addBooking()
     b.pricePerNight = priceSpin->value();
     b.roomType = roomTypeCombo->currentText();
 
-    bookings.append(b);
-    appendBookingToTable(b);
+    service.add(b);
     modified = true;
     Logger::log("Добавлена запись бронирования");
 }
@@ -210,15 +212,14 @@ void MainWindow::addBooking()
 void MainWindow::deleteSelected()
 {
     int row = table->currentRow();
-    if (row < 0 || row >= bookings.size())
+    if (row < 0)
         return;
 
     auto reply = QMessageBox::question(this, tr("Подтверждение"),
                                        tr("Удалить выбранную запись?"),
                                        QMessageBox::Yes | QMessageBox::No);
     if (reply == QMessageBox::Yes) {
-        bookings.removeAt(row);
-        table->removeRow(row);
+        service.remove(row);
         modified = true;
         Logger::log("Удалена запись №" + QString::number(row + 1));
     }
@@ -240,8 +241,9 @@ void MainWindow::saveText()
 
     QTextStream out(&file);
 
-    out << bookings.size() << '\n';
-    for (const Booking& b : bookings) {
+    auto list = service.all();
+    out << list.size() << '\n';
+    for (const Booking& b : list) {
         b.writeText(out);
     }
 
@@ -284,8 +286,11 @@ void MainWindow::loadText()
 
     file.close();
 
-    bookings = loaded;
-    refreshTable();
+    service.clear();
+    for (const Booking& b : loaded) {
+        service.add(b);
+    }
+
     lastFileName = fileName;
     modified = false;
     Logger::log("Загрузка из текстового файла: " + fileName);
@@ -307,8 +312,10 @@ void MainWindow::saveBinary()
 
     QDataStream out(&file);
     out.setVersion(QDataStream::Qt_6_5);
-    out << static_cast<quint32>(bookings.size());
-    for (const Booking& b : bookings) {
+
+    auto list = service.all();
+    out << static_cast<quint32>(list.size());
+    for (const Booking& b : list) {
         out << b;
     }
 
@@ -352,8 +359,11 @@ void MainWindow::loadBinary()
 
     file.close();
 
-    bookings = loaded;
-    refreshTable();
+    service.clear();
+    for (const Booking& b : loaded) {
+        service.add(b);
+    }
+
     lastFileName = fileName;
     modified = false;
     Logger::log("Загрузка из бинарного файла: " + fileName);
@@ -366,12 +376,11 @@ void MainWindow::searchByCustomer()
     if (name.isEmpty())
         return;
 
-    for (int i = 0; i < bookings.size(); ++i) {
-        if (bookings[i].customerName.compare(name, Qt::CaseInsensitive) == 0) {
-            table->selectRow(i);
-            Logger::log("Поиск по клиенту: " + name);
-            return;
-        }
+    int index = service.findByCustomer(name);
+    if (index >= 0) {
+        table->selectRow(index);
+        Logger::log("Поиск по клиенту: " + name);
+        return;
     }
 
     QMessageBox::information(this, tr("Результат поиска"),
@@ -380,22 +389,14 @@ void MainWindow::searchByCustomer()
 
 void MainWindow::sortByCustomer()
 {
-    std::sort(bookings.begin(), bookings.end(),
-              [](const Booking& a, const Booking& b) {
-                  return a.customerName.toLower() < b.customerName.toLower();
-              });
-    refreshTable();
+    service.sortByCustomer();
     modified = true;
     Logger::log("Сортировка по клиенту");
 }
 
 void MainWindow::sortByNights()
 {
-    std::sort(bookings.begin(), bookings.end(),
-              [](const Booking& a, const Booking& b) {
-                  return a.nights < b.nights;
-              });
-    refreshTable();
+    service.sortByNights();
     modified = true;
     Logger::log("Сортировка по ночам");
 }
@@ -405,7 +406,8 @@ void MainWindow::about()
     QMessageBox::about(this, tr("О программе"),
                        tr("Учебное приложение\n\"Бронирование гостиницы\"\n"
                           "Ввод, редактирование, сохранение и загрузка\n"
-                          "текстовых и числовых данных (QTextStream, QDataStream)."));
+                          "текстовых и числовых данных (QTextStream, QDataStream).\n"
+                          "Логика отделена от UI (MVC, Observer)."));
 }
 
 void MainWindow::readSettings()
@@ -435,4 +437,21 @@ void MainWindow::closeEvent(QCloseEvent *event)
     }
     writeSettings();
     QMainWindow::closeEvent(event);
+}
+
+// Observer implementation
+
+void MainWindow::onBookingAdded(const Booking& /*b*/)
+{
+    // Можно было бы добавлять только одну строку,
+    // но для простоты обновляем всю таблицу
+}
+
+void MainWindow::onBookingRemoved(int /*index*/)
+{
+}
+
+void MainWindow::onBookingsChanged()
+{
+    refreshTable();
 }

@@ -1,0 +1,10 @@
+debug/abstracthuman.o
+debug/main.o
+debug/mainwindow.o
+debug/abstracthuman.o
+debug/student.o
+debug/aspirant.o
+debug/worker.o
+debug/flashlist.o
+debug/stringtasks.o
+debug/moc_mainwindow.o

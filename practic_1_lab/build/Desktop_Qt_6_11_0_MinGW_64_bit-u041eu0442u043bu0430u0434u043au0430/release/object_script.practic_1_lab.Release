@@ -1,0 +1,10 @@
+release/abstracthuman.o
+release/main.o
+release/mainwindow.o
+release/abstracthuman.o
+release/student.o
+release/aspirant.o
+release/worker.o
+release/flashlist.o
+release/stringtasks.o
+release/moc_mainwindow.o
